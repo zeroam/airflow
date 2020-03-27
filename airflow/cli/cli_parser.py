@@ -55,6 +55,24 @@ def lazy_load_command(import_path: str) -> Callable:
     return command
 
 
+class DefaultHelpParser(argparse.ArgumentParser):
+    """CustomParser to display help message"""
+
+    def _check_value(self, action, value):
+        """Override _check_value and check conditionally added command"""
+        executor = conf.get('core', 'EXECUTOR')
+        if value == 'celery' and executor != ExecutorLoader.CELERY_EXECUTOR:
+            message = f'celery command used in CeleryExecutor instead {executor}'
+            raise AirflowException(message)
+
+        super()._check_value(action, value)
+
+    def error(self, message):
+        """Override error and use print_instead of print_usage"""
+        self.print_help()
+        self.exit(2, '\n{} command error: {}, see help above.\n'.format(self.prog, message))
+
+
 class Arg:
     """Class to keep information about command line argument"""
     # pylint: disable=redefined-builtin
@@ -651,6 +669,17 @@ class GroupCommand(NamedTuple):
     subcommands: Iterable
 
 
+class CeleryCommand(GroupCommand):
+    """Celery CLI command"""
+    def __init__(self, *args, **kwargs):
+        if conf.get("core", "EXECUTOR") == ExecutorLoader.CELERY_EXECUTOR or BUILD_DOCS:
+            print('good')
+        else:
+            print('error')
+            raise Exception('celery error')
+        super().__init__(*args, **kwargs)
+
+
 CLICommand = Union[ActionCommand, GroupCommand]
 
 
@@ -1102,9 +1131,7 @@ airflow_commands: List[CLICommand] = [
         func=lazy_load_command('airflow.cli.commands.config_command.show_config'),
         args=(),
     ),
-]
-if conf.get("core", "EXECUTOR") == ExecutorLoader.CELERY_EXECUTOR or BUILD_DOCS:
-    airflow_commands.append(GroupCommand(
+    GroupCommand(
         name="celery",
         help="Start celery components",
         subcommands=(
@@ -1134,7 +1161,8 @@ if conf.get("core", "EXECUTOR") == ExecutorLoader.CELERY_EXECUTOR or BUILD_DOCS:
                 args=(),
             )
         )
-    ))
+    )
+]
 ALL_COMMANDS_DICT: Dict[str, CLICommand] = {sp.name: sp for sp in airflow_commands}
 DAG_CLI_COMMANDS: Set[str] = {
     'list_tasks', 'backfill', 'test', 'run', 'pause', 'unpause', 'list_dag_runs'
@@ -1143,11 +1171,6 @@ DAG_CLI_COMMANDS: Set[str] = {
 
 def get_parser(dag_parser: bool = False) -> argparse.ArgumentParser:
     """Creates and returns command line argument parser"""
-    class DefaultHelpParser(argparse.ArgumentParser):
-        """Override argparse.ArgumentParser.error and use print_help instead of print_usage"""
-        def error(self, message):
-            self.print_help()
-            self.exit(2, '\n{} command error: {}, see help above.\n'.format(self.prog, message))
     parser = DefaultHelpParser(prog="airflow")
     subparsers = parser.add_subparsers(
         help='sub-command help', dest='subcommand')
